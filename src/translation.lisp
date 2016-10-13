@@ -7,6 +7,14 @@
 
 (in-package #:lsystem)
 
+(define-condition bad-data (error)
+  ((message :initarg :message
+            :reader message)
+   (value :initarg :value
+          :reader value))
+  (:report (lambda (condition stream)
+             (format stream "~A: ~A~%" (message condition) (value condition)))))
+
 (gl:define-gl-array-format position-color
   (gl:vertex :type :float :components (x y))
   (gl:color :type :unsigned-char :components (r g b)))
@@ -56,7 +64,7 @@ vertices.")
    POSITION - Integer for the index position (zero-based)
    INDEX    - Integer for the position in the vertex array (zero-based)"
   (declare (type integer position index))
-  
+
   (setf (gl:glaref (indices obj) position) index))
 
 ;;; OpenGL-related functions.
@@ -97,7 +105,7 @@ vertices.")
 
   (gl:enable-client-state :vertex-array)
   (gl:bind-gl-vertex-array (vertices object))
-  (gl:draw-elements :lines (indices object)))
+  (gl:draw-elements :lines (indices object) :offset 0))
 
 ;;; End OpenGL-related functions
 
@@ -112,7 +120,7 @@ vertices.")
    Multiple values x,y as a short-float."
   (values (coerce (+ start-x (* length (cos (degrees-to-radians angle))))
                   'short-float)
-          (coerce (+ start-y (* length (sin (degrees-to-radians angle))))
+          (coerce (+ start-y  (* length (sin (degrees-to-radians angle))))
                   'short-float)))
 
 (defun create-gl-object (num-vertices num-indices)
@@ -128,53 +136,105 @@ vertices.")
                  :vertices (gl:alloc-gl-array 'position-color num-vertices)
                  :indices (gl:alloc-gl-array :unsigned-short num-indices)))
 
-(defun create-object (lsys translation start-x start-y current-angle)
+(defun create-object (lsys translation start-x start-y start-angle)
   "Instantiate a gl-object class using the information in the LSystem and
  the TRANSLATION file.
  Args
    LSYS - An instance of lsystem
    START-X - Float; assumed normalized; the starting x-value for the object.
    START-Y - Float; assumed normalized; the starting y-value for the object.
-   CURRENT-ANGLE - Float; The starting angle for the object.
+   START-ANGLE - Float; The starting angle for the object.
  Return
    An instance of gl-object"
   (declare (type lsystem lsys) (type array translation))
 
-  (let* ((system-size (iterate:iter
-                        (iterate:for i iterate::in-vector (lsystem lsys))
-                        (iterate:counting (member i (variables lsys)
-                                                  :test 'string=))))
-         (window (glfw:get-window-size))
-         (object (create-gl-object system-size (* system-size 2))))
-    (nset-gl-object-vertex object 0 start-x start-y)
-    (iterate:iter
-     (iterate:with x1 = start-x)
-     (iterate:with y1 = start-y)
-     (iterate:with c = 0)
-     (iterate:for i iterate::in-vector (lsystem lsys))
-
-     (let ((trans (first (iterate:iter
-                    (iterate:for j iterate::in-vector translation)
-                    (when (string= (elt j 0) i)
-                      (iterate:collecting j)
+  ;; iter-translate looks for STRING-INPUT within the TRANSLATION-VECTOR,
+  ;; and if it is found then returns that element of the TRANSLATION-VECTOR;
+  ;; otherwise, return nil.
+  (flet ((iter-translate (string-input translation-vector)
+           (first (iterate:iter
+                    (iterate:for i iterate::in-vector translation-vector)
+                    (when (string= (elt i 0) string-input)
+                      (iterate:collecting i)
                       (iterate:finish))))))
-       (unless (null trans) ;; TODO Should never be null when fully implemented.
-         (multiple-value-bind (x y)
-             (calculate-new-point x1 y1 (parse-integer (elt trans 1))
-                                  current-angle)
+    (let* ((system-size (1+ (iterate:iter
+                              (iterate:for i iterate::in-vector (lsystem lsys))
+                              (iterate:counting (member i (variables lsys)
+                                                        :test 'string=)))))
+           (window (glfw:get-window-size))
+           (object (create-gl-object system-size (* system-size 2)))
+           (current-angle start-angle)
+           (stack '()))
+      
+      ;; "Origin" point doesn't belong to the system so it is included.
+      (nset-gl-object-vertex object 0 start-x start-y)
+      
+      (iterate:iter
+        (iterate:with x1 = start-x)
+        (iterate:with y1 = start-y)
+        (iterate:with k = 0)
+        ;; K-Value is used to keep track of indices when values are pushed onto
+        ;; the stack.
+        (iterate:with k-value = 0)
+        (iterate:for i iterate::in-vector (lsystem lsys))
 
-           ;; TODO: There's probably a better way to handle this.
-           (setf x (/ x (first window)))
-           (setf y (/ y (first (last window))))
-           
-           (nset-gl-object-vertex object (1+ c) x y)
-           (nset-gl-object-index object (* 2 c) c)
-           (nset-gl-object-index object (1+ (* c 2)) (mod (+ c 2) system-size))
-         
-           (setf x1 x)
-           (setf y1 y)
-           (setf c (1+ c))))))
-    object))
+        ;; TODO Improve error handling.
+        (handler-case 
+            (cond ((member i (variables lsys) :test 'string=)
+                   (let ((trans (iter-translate i translation)))
+                     (multiple-value-bind (x y)
+                         (calculate-new-point x1 y1
+                                              (parse-integer (elt trans 1))
+                                              current-angle)
+                       (nset-gl-object-vertex object
+                                              (1+ k)
+                                              (/ x (first window))
+                                              (/ y (first (last window))))
+                       (nset-gl-object-index object (* k 2) k-value)
+
+                       ;; First *-index uses the popped k-value.
+                       ;; Second *-index resets the k-value to k.
+                       (nset-gl-object-index object (1+ (* k 2)) k-value)
+                       (cond ((= k k-value)
+                              (nset-gl-object-index object (1+ (* k 2))
+                                                    (1+ k-value)))
+                             (t
+                              (progn
+                                (setf k-value k)
+                                (nset-gl-object-index object (1+ (* k 2))
+                                                      (1+ k-value)))))
+
+                       (setf x1 x)
+                       (setf y1 y))
+                     (setf k (+ k 1))
+                     (setf k-value (+ k-value 1))))
+                  ((member i (constants lsys) :test 'string=)
+                   ;; [ and ] are builtin constants. Since they do not require
+                   ;; translation data, they are handled specially.
+                   (cond ((string= i #\[)
+                          (push (list x1 y1 current-angle k) stack))
+                         ((string= i #\])
+                          (let ((values (pop stack)))
+                            (setf x1 (pop values))
+                            (setf y1 (pop values))
+                            (setf current-angle (pop values))
+                            (setf k-value (pop values))
+                            ))
+                         (t (let ((trans (iter-translate i translation)))
+                              ;; + - are constants that change the angle.
+                              (cond ((string= (elt trans 0) #\+) ; Clock-wise
+                                     (setf current-angle
+                                           (- current-angle
+                                              (read-from-string
+                                               (elt trans 1)))))
+                                    ((string= (elt trans 0) #\-)
+                                     (setf current-angle
+                                           (+ current-angle
+                                              (read-from-string
+                                               (elt trans 1)))))))))))
+          (error (c)
+            (error 'bad-data :message "Bad translation data" :value c))))
+    object)))
 
 (defun degrees-to-radians (degrees)
   "Convience function to convert DEGREES to radians.
@@ -186,6 +246,9 @@ vertices.")
 
 (defun read-translation-file (file)
   "Read and parse the translation FILE (string).
+ Numerical values are left in there string format to be handled elsewhere.
+ TODO
+  * Possibly change how numbers are stored.
  Args
    FILE - String value for the file location.
  Return
@@ -248,5 +311,7 @@ vertices.")
         (loop until (glfw:window-should-close-p)
            do (render object)
            do (glfw:poll-events)
-           do (glfw:swap-buffers))
+           do (glfw:swap-buffers)
+             )
         (gl-cleanup object)))))
+;; TODO See if gl-cleanup is needed.
