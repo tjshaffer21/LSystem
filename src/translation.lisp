@@ -75,8 +75,8 @@ vertices.")
 
 (glfw:def-key-callback key-callback (window key scancode action mod-keys)
   (declare (ignore window scancode mod-keys))
-  (when (and (eq key :escape) (eq action :press))
-    (glfw:set-window-should-close)))
+  (cond ((and (eq key :escape) (eq action :press))
+         (glfw:set-window-should-close))))
 
 (glfw:def-mouse-button-callback mouse-callback (window button action mod-keys)
   (declare (ignore window mod-keys action button)))
@@ -199,10 +199,9 @@ vertices.")
                               (nset-gl-object-index object (1+ (* k 2))
                                                     (1+ k-value)))
                              (t
-                              (progn
-                                (setf k-value k)
-                                (nset-gl-object-index object (1+ (* k 2))
-                                                      (1+ k-value)))))
+                              (setf k-value k)
+                              (nset-gl-object-index object (1+ (* k 2))
+                                                    (1+ k-value))))
 
                        (setf x1 x)
                        (setf y1 y))
@@ -218,8 +217,7 @@ vertices.")
                             (setf x1 (pop values))
                             (setf y1 (pop values))
                             (setf current-angle (pop values))
-                            (setf k-value (pop values))
-                            ))
+                            (setf k-value (pop values))))
                          (t (let ((trans (iter-translate i translation)))
                               ;; + - are constants that change the angle.
                               (cond ((string= (elt trans 0) #\+) ; Clock-wise
@@ -237,7 +235,7 @@ vertices.")
     object)))
 
 (defun degrees-to-radians (degrees)
-  "Convience function to convert DEGREES to radians.
+  "Convenience function to convert DEGREES to radians.
  Args
    DEGREES - Float
  Return
@@ -311,7 +309,5 @@ vertices.")
         (loop until (glfw:window-should-close-p)
            do (render object)
            do (glfw:poll-events)
-           do (glfw:swap-buffers)
-             )
+           do (glfw:swap-buffers))
         (gl-cleanup object)))))
-;; TODO See if gl-cleanup is needed.

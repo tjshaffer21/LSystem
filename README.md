@@ -21,6 +21,7 @@ Dependecies:
 * cl-utilities
 * cl-opengl
 * cl-glfw3
+* asdf and quickload
 
 rules.txt:
 
@@ -44,3 +45,12 @@ translate.txt:
 
 [size] (ex. 1000,1000)
 [rules (one per line) (ex. F:80:white)
+
+
+
+TODO
+======
++ Error handling
++ Zoom in and out
++ Handle multiple rules and translations
++ Modify rules and translations during run time.

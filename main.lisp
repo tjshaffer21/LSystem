@@ -3,6 +3,8 @@
 ;;;; Not to be confused with src/main which is the top-level code for the
 ;;;; package, and *should* ideally be renamed to an appropriate name later.
 
+(asdf:load-asd "lsystem.asd")
+
 (ql:quickload :cl-utilities)
 (ql:quickload :iterate)
 (ql:quickload :lsystem)
