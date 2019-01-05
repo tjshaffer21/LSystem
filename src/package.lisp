@@ -1,12 +1,10 @@
-;;;; package.lisp
-
 (defpackage #:lsystem
   (:use #:cl)
   (:export :main
-           :create-lsystem
-           :substitute-for
-           :variables
-           :constants
+           :create-lsystem-from-file
+           :do-substitution-time
+           :get-lsystem-current
+           :nonterminals
            :rules
-           :lsystem
-           :len))
+           :substitution
+           :terminals))

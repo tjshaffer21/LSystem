@@ -4,154 +4,94 @@
 
 (in-package #:lsystem)
 
-(define-condition malformed-grammar (warning)
-  ((message :initarg :message
-            :reader message)
-   (value :initarg :value
-          :reader value))
-  (:report (lambda (condition stream)
-             (format stream "~a~a~%" (message condition) (value condition)))))
-
 (defclass lsystem ()
-  ((system :reader lsystem
-           :initarg :lsystem
-           :documentation "The system representation's current form.")
-   (variables :reader variables
-              :initarg :variables
-              :type list
-              :documentation "A list of all the variables.")
-   (constants :reader constants
-              :initarg :constants
-              :type list
-              :documentation "A list of all the constants.")
-   (rules :reader rules
+  ((rules :reader rules
           :initarg :rules
-          :initform '()
-          :type list
-          :documentation "AList of the rules for the system.")
-   (len :reader len
-        :initarg :length
-        :documentation "The size of the lsystem both variables and constants."))
-  (:documentation "Structure for a Lindenmayer System implementation."))
+          :initform (make-hash-table)
+          :type hashmap
+          :documentation "Rules for the L-System.")
+   (terminals :reader terminals
+              :initarg :terminals
+              :initform '()
+              :type list
+              :documentation "Set of terminals in the system.")
+   (nonterminals :reader nonterminals
+                 :initarg :nonterminals
+                 :initform '()
+                 :type list
+                 :documentation "Set of nonterminals in the system.")
+   (history :reader history
+            :initarg :history
+            :initform (make-hash-table)
+            :type hashmap
+            :documentation "Cache of iterations.")
+   (current-iteration :reader current
+                      :initarg :current
+                      :initform 0
+                      :type integer
+                      :documentation "The current iteration of the system. Where
+ current-iteration == 0 is the initial statement.")
+   (angle :reader angle
+          :initarg :angle
+          :initform 90.0
+          :type float
+          :documentation ""))
+  (:documentation "Data structure for the Lindenmayer System."))
 
-(defmethod substitution ((lsystem lsystem))
-  "Apply substitution rules onto the LSYSTEM.
- Args
-   lsystem - Instance of the lsystem class.
- Return
-   A new instance of the lsystem."
-  (let ((sys (apply #'concatenate 'string
-                    (iterate:iter
-                     (iterate:for v iterate::in-vector (lsystem lsystem))
-                     (let ((res (assoc v (rules lsystem) :test 'string=)))
-                       (cond ((null res) (iterate:collect (string v)))
-                             (t (iterate:collect (cdr res)))))))))
-    (make-instance
-     'lsystem
-     :lsystem sys
-     :length (length sys)
-     :variables (variables lsystem)
-     :constants (constants lsystem)
-     :rules (rules lsystem))))
+(defmethod get-lsystem-current ((obj lsystem))
+  "Return the current state of the lsystem OBJ."
+  (gethash (current obj) (history obj)))
 
-(defmethod substitute-for ((lsystem lsystem) iterations)
-  "Perform substitution on LSYSTEM for ITERATIONS
- Args
-   lsystem - An instance of the lsystem class.
-   iteration - interger value for iterations to perform.
- Return
-   If iterations <= 0 then the original lsystem; else a new instance."
-  (declare (type integer iterations))
+(defmethod get-lsystem-at ((obj lsystem) iteration)
+  "Return the state of the lsytem at the specified ITERATION."
+  (gethash iteration (history obj)))
 
-  (cond ((> iterations 0)
-         (substitute-for (substitution lsystem) (1- iterations)))
-        (t lsystem)))
+(defmethod substitution ((obj lsystem))
+  "Perform the substitution operation on lystem OBJ, returning the new LSYSTEM
+ object."
+  (let ((copy-rules (alexandria:copy-hash-table (rules obj)))
+        (copy-history (alexandria:copy-hash-table (history obj))))
+    (setf (gethash (1+ (current obj)) copy-history)
+          (apply #'concatenate 'string
+            (iterate:iter
+              (iterate:for char iterate::in-vector
+                  (gethash (current obj) (history obj)))
+              (iterate:for res = (gethash (string char) (rules obj)))
+              (if res
+                  (iterate::collect res)
+                  (iterate::collect (string char))))))
+    (make-instance 'lsystem :rules copy-rules
+                            :terminals (copy-list (terminals obj))
+                            :nonterminals (copy-list (nonterminals obj))
+                            :history copy-history
+                            :current (1+ (current obj))
+                            :angle (angle obj))))
 
-(defmethod print-object ((obj lsystem) out)
-  (print-unreadable-object (obj out :type t)
-    (format out "Current: ~s Length: ~s Variables: ~s Constants: ~s Rules: ~s"
-            (lsystem obj) (len obj) (variables obj) (constants obj)
-            (rules obj))))
+(defmethod do-substitution-times ((obj lsystem) times)
+  "Perform substitution on lsystem OBJ the give number of TIMES returning the
+ last LSYSTEM."
+  (declare (type integer times))
+  (cond ((<= times 0) obj)
+        (t (do-substitution-times (substitution obj) (1- times)))))
 
-(defun create-lsystem (axiom rules)
-  "Create an instance of the lsystem class.
- Args
-   AXIOM is the initial start point of the system
-   RULES is a list of variables, constants, and rules (alist). See parse-rules.
- Return
-   A new instance of lsystem."
-  (declare (type string axiom) (type list rules))
+(defun create-lsystem-from-file (yaml-file)
+  "Create the lsystem from the YAML-FILE whch is either a string or path object;
+ return values of (lsystem, iterations)."
+  (let ((yaml-data (read-lsystem-file yaml-file))
+        (init-sys (make-hash-table)))
+    (setf (gethash 0 init-sys) (gethash "initiator" yaml-data))
+    (values (make-instance 'lsystem
+                  :rules (alexandria::copy-hash-table (gethash "rules" yaml-data))
+                  :terminals (copy-list (gethash "terminals" yaml-data))
+                  :nonterminals (copy-list (gethash "nonterminals" yaml-data))
+                  :history init-sys
+                  :angle (gethash "angle" yaml-data))
+            (gethash "iterations" yaml-data))))
 
-  (make-instance 'lsystem
-                 :lsystem axiom
-                 :length (length axiom)
-                 :variables (first rules)
-                 :constants (second rules)
-                 :rules (first (last rules))))
-
-(defun create-alists (rules)
-  "Parse list of RULES into an alist.
- Args
-   rules - a list of strings.
- Return
-   A list of alists with both elements being strings."
-  (let ((rule (first rules))
-        (parsed '()))
-    (cond ((typep rule 'string)
-           (cond ((char= (elt rule 1) #\=)
-                  (push (cons (subseq rule 0 1) (subseq rule 2)) parsed))
-                 (t (malformed-grammar-warning rule))))
-          (t (malformed-grammar-warning rule)))
-    (when (not (null (rest rules)))
-      (setf parsed (append parsed (create-alists (rest rules)))))
-    parsed))
-
-(defun parse-rules (rules)
-  "Parse a list of RULES strings
- Args
-   rules - a list of strings.
- Return
-   A list of variables, constants, and rules (alist)."
-  (let* ((arules (create-alists rules))
-         (vars (map 'list #'first arules))
-         (const (alexandria:flatten
-                 (iterate:iter
-                   (iterate:for i iterate:in arules)
-                   (iterate:collect (iterate:iter
-                                      (iterate:for j iterate::in-sequence
-                                                   (cdr i))
-                                      (unless (member j vars :test 'string=)
-                                        (iterate:collect j))))))))
-    (list vars const arules)))
-
-(defun read-lsystem-file (file)
-  "Parse the FILE.
- See README for proper file layout.
- Args
-   file - A string holding the file location.
- Return
-   A list of [axiom iterations [rules]]"
-  (declare (type string file))
-
-  (with-open-file (stream file :direction :input)
-    (when stream
-      (let ((results '())
-            (rules '()))
-
-        ;; Rules
-        (iterate:iter
-         (iterate:with line = (read-line stream nil))
-         (iterate:while (and line (not (string= line #\return))))
-         (push (string-trim '(#\return) line) rules)
-         (setf line (read-line stream nil)))
-        (push (reverse rules) results)
-
-        ;; Number of iterations
-        (push (parse-integer (read-line stream nil)) results)
-
-        ;; Axiom
-        (push (string-trim '(#\return) (read-line stream nil)) results)
-        results))))
-
-(defun malformed-grammar-warning (value)
-  (warn 'malformed-grammar :message "Malfrmed grammar: " :value value))
+;;; TODO Error checking.
+(defun read-lsystem-file (path)
+  "Read the string or pathname PATH and return the resulting hashtable."
+  (typecase path
+      (string (yaml:parse (pathname path)))
+      (pathname (yaml:parse path))
+      (t (error "Unable to read file format."))))

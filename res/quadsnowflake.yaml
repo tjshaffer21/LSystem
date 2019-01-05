@@ -1,0 +1,10 @@
+terminals:
+    - "+"
+    - "-"
+nonterminals:
+    - "F"
+rules:
+    F: F+F-F-F+F
+angle: 90.0
+iterations: 4
+initiator: -F
