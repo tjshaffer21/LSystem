@@ -1,7 +1,6 @@
 start-x: 0.0
-start-y: 0.0
+start-y: -1.0
 start-angle: 90.0
 rules:
     F:
-        - 20
-        - "red"
+        - 0.03

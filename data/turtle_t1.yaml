@@ -1,0 +1,6 @@
+start-x: 0.0
+start-y: -1.0
+start-angle: 90.0
+rules:
+    F:
+        - 0.03

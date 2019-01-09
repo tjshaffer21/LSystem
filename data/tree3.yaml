@@ -1,0 +1,9 @@
+rules:
+    F: FF+[+F-F-F]-[-F+F+F]
+trules:
+    "[": push
+    "]": pop
+    "+": [angle, -22.5]
+    "-": [angle, 22.5]
+iterations: 5
+axiom: F

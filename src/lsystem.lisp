@@ -10,16 +10,10 @@
           :initform (make-hash-table)
           :type hashmap
           :documentation "Rules for the L-System.")
-   (terminals :reader terminals
-              :initarg :terminals
-              :initform '()
-              :type list
-              :documentation "Set of terminals in the system.")
-   (nonterminals :reader nonterminals
-                 :initarg :nonterminals
-                 :initform '()
-                 :type list
-                 :documentation "Set of nonterminals in the system.")
+   (trules :reader trules
+           :initarg :trules
+           :initform (make-hash-table)
+           :documentation "Rules for the terminals of the L-System.")
    (history :reader history
             :initarg :history
             :initform (make-hash-table)
@@ -30,12 +24,7 @@
                       :initform 0
                       :type integer
                       :documentation "The current iteration of the system. Where
- current-iteration == 0 is the initial statement.")
-   (angle :reader angle
-          :initarg :angle
-          :initform 90.0
-          :type float
-          :documentation ""))
+ current-iteration == 0 is the initial statement."))
   (:documentation "Data structure for the Lindenmayer System."))
 
 (defmethod get-lsystem-current ((obj lsystem))
@@ -49,23 +38,20 @@
 (defmethod substitution ((obj lsystem))
   "Perform the substitution operation on lystem OBJ, returning the new LSYSTEM
  object."
-  (let ((copy-rules (alexandria:copy-hash-table (rules obj)))
-        (copy-history (alexandria:copy-hash-table (history obj))))
+  (let ((copy-history (alexandria:copy-hash-table (history obj))))
     (setf (gethash (1+ (current obj)) copy-history)
-          (apply #'concatenate 'string
-            (iterate:iter
-              (iterate:for char iterate::in-vector
-                  (gethash (current obj) (history obj)))
-              (iterate:for res = (gethash (string char) (rules obj)))
-              (if res
-                  (iterate::collect res)
-                  (iterate::collect (string char))))))
-    (make-instance 'lsystem :rules copy-rules
-                            :terminals (copy-list (terminals obj))
-                            :nonterminals (copy-list (nonterminals obj))
+          (format nil "~{~A~}" (iterate:iter
+                                  (iterate:for char iterate::in-vector
+                                      (get-lsystem-current obj))
+                                  (iterate:for res =
+                                      (gethash (string char) (rules obj)))
+                                  (if res
+                                      (iterate::collect res)
+                                      (iterate::collect (string char))))))
+    (make-instance 'lsystem :rules (alexandria:copy-hash-table (rules obj))
+                            :trules (alexandria:copy-hash-table (trules obj))
                             :history copy-history
-                            :current (1+ (current obj))
-                            :angle (angle obj))))
+                            :current (1+ (current obj)))))
 
 (defmethod do-substitution-times ((obj lsystem) times)
   "Perform substitution on lsystem OBJ the give number of TIMES returning the
@@ -79,19 +65,24 @@
  return values of (lsystem, iterations)."
   (let ((yaml-data (read-lsystem-file yaml-file))
         (init-sys (make-hash-table)))
-    (setf (gethash 0 init-sys) (gethash "initiator" yaml-data))
+    (setf (gethash 0 init-sys)
+          (with-restart-validate-input yaml-data "axiom"))
     (values (make-instance 'lsystem
-                  :rules (alexandria::copy-hash-table (gethash "rules" yaml-data))
-                  :terminals (copy-list (gethash "terminals" yaml-data))
-                  :nonterminals (copy-list (gethash "nonterminals" yaml-data))
-                  :history init-sys
-                  :angle (gethash "angle" yaml-data))
-            (gethash "iterations" yaml-data))))
+                :rules (alexandria::copy-hash-table
+                          (with-error-validate-input yaml-data "rules"))
+                :trules (alexandria::copy-hash-table
+                          (with-error-validate-input yaml-data "trules"))
+                :history init-sys)
+            (with-restart-validate-input yaml-data "iterations"))))
 
-;;; TODO Error checking.
 (defun read-lsystem-file (path)
   "Read the string or pathname PATH and return the resulting hashtable."
-  (typecase path
-      (string (yaml:parse (pathname path)))
-      (pathname (yaml:parse path))
-      (t (error "Unable to read file format."))))
+  (restart-case (typecase path
+                  (string (yaml:parse (pathname path)))
+                  (pathname (yaml:parse path))
+                  (t (error 'bad-file-input
+                            :message "Cannot read specified file.")))
+    (use-value (value)
+      :report "Select new file."
+      :interactive (lambda () (list (ask "Path: ")))
+      (yaml:parse (pathname value)))))

@@ -3,14 +3,6 @@
 
 (in-package #:lsystem)
 
-(define-condition bad-data (error)
-  ((message :initarg :message
-            :reader message)
-   (value :initarg :value
-          :reader value))
-  (:report (lambda (condition stream)
-             (format stream "~A: ~A~%" (message condition) (value condition)))))
-
 (gl:define-gl-array-format position-color
   (gl:vertex :type :float :components (x y))
   (gl:color :type :unsigned-char :components (r g b)))
@@ -109,77 +101,83 @@
   (declare (type lsystem lsys)
            (type hashmap translation))
 
-  (let* ((system-size (1+ (iterate:iter
-                            (iterate:for ch iterate::in-vector
-                                (get-lsystem-current lsys))
-                            (iterate:counting (member ch (nonterminals lsys)
-                                                      :test 'string=)))))
-          (window (glfw:get-window-size))
-          (obj (create-gl-object system-size (* system-size 2)))
-          (current-angle (gethash "start-angle" translation))
-          (stack '()))
-    (nset-gl-object-vertex obj 0 (gethash "start-x" translation)
-        (gethash "start-y" translation)) ; Origin
-    (iterate:iter
-      (iterate:with x1 = (gethash "start-x" translation))
-      (iterate:with y1 = (gethash "start-y" translation))
-      (iterate:with k = 0)
-      (iterate:with k-value = 0)
-      (iterate:for i iterate::in-vector (get-lsystem-current lsys))
-      (iterate:for rule-translation = (gethash (string i)
-                                               (gethash "rules" translation)))
-      (handler-case
-        (cond ((member i (nonterminals lsys) :test 'string=)
-                (multiple-value-bind (x y)
-                    (calculate-new-point x1 y1 (first rule-translation)
-                        current-angle)
-                  (nset-gl-object-vertex obj (1+ k) (/ x (first window))
-                      (/ y (first (last window))))
-                  (nset-gl-object-index obj (* k 2) k-value)
+  (iterate:iter
+    (iterate:with system-size =
+        (1+ (iterate:iter
+              (iterate:with keys = (alexandria:hash-table-keys (rules lsys)))
+              (iterate:for ch iterate::in-vector (get-lsystem-current lsys))
+              (iterate:counting (member ch keys :test 'string=)))))
+    (iterate:with obj = (create-gl-object system-size (* system-size 2)))
+    (iterate:with stack = '())
+    (iterate:with window = (glfw:get-window-size))
 
-                  (nset-gl-object-index obj (1+ (* k 2)) k-value)
-                  (cond ((= k k-value)
-                          (nset-gl-object-index obj (1+ (* k 2)) (1+ k-value)))
-                        (t
-                          (nset-gl-object-index obj (1+ (* k 2))
-                            (1+ (setf k-value k)))))
-                    (setf x1 x)
-                    (setf y1 y))
-                  (setf k (1+ k))
-                  (setf k-value (1+ k-value)))
-              ((member i (terminals lsys) :test 'string=) ; TODO Clean up and make more abstract.
-                (cond ((string= i #\[)
-                      (push (list x1 y1 current-angle k) stack))
-                    ((string= i #\])
-                      (let ((values (pop stack)))
+    (iterate:with current-angle =
+        (with-restart-validate-input translation "start-angle"))
+    (iterate:with x1 = (with-restart-validate-input translation "start-x"))
+    (iterate:with y1 = (with-restart-validate-input translation "start-y"))
+    (iterate:with k = 0) ; An index for OpenGL
+    (iterate:with k-value = 0) ; An index for OpenGL.
+
+    (iterate:with translation-rules =
+        (with-error-validate-input translation "rules")) ; Cache
+
+    (iterate:for i iterate::in-vector (get-lsystem-current lsys))
+    (iterate:for rule-translation = (gethash (string i) translation-rules))
+    (iterate:if-first-time (nset-gl-object-vertex obj 0 x1 y1))
+
+    (cond ((gethash (string i) (rules lsys))
+            (multiple-value-bind (x y)
+                (calculate-new-point x1 y1 (first rule-translation)
+                    current-angle)
+              (nset-gl-object-vertex obj (1+ k) x y)
+              (nset-gl-object-index obj (* k 2) k-value)
+
+              (nset-gl-object-index obj (1+ (* k 2)) k-value)
+              (cond ((= k k-value)
+                      (nset-gl-object-index obj (1+ (* k 2)) (1+ k-value)))
+                    (t
+                      (nset-gl-object-index obj (1+ (* k 2))
+                        (1+ (setf k-value k)))))
+                (setf x1 x)
+                (setf y1 y))
+              (incf k)
+              (incf k-value))
+          ((gethash (string i) (trules lsys))
+            (let ((cache-rule (gethash (string i) (trules lsys))))
+              (cond ((typep cache-rule 'list)
+                     (when (string= (first cache-rule) "angle")
+                        (setf current-angle (+ current-angle
+                                               (first (last cache-rule))))))
+                    ((string= cache-rule "push")
+                     (push (list x1 y1 current-angle k) stack))
+                    ((string= cache-rule "pop")
+                     (let ((values (pop stack)))
                         (setf x1 (pop values))
                         (setf y1 (pop values))
                         (setf current-angle (pop values))
                         (setf k-value (pop values))))
-                    ((string= i #\+)
-                     (setf current-angle (- current-angle (angle lsys))))
-                    ((string= i #\-)
-                     (setf current-angle (+ current-angle (angle lsys)))))))
-      (error (c)
-        (error 'bad-data :message "Bad translation data" :value c))))
-  obj))
+                    (t (warn "Unimplemented terminal rule detected!")))))
+          (t (warn "Unimplemented rule detected")))
+    (iterate:finally (iterate::return obj))))
 
 (defun degrees-to-radians (degrees)
   "Convert float DEGREES into radians; returning a float."
   (declare (type float degrees))
-  (* degrees (/ pi 180.0)))
+  (* degrees 0.017453292519943295D0))
 
 (defun read-translation-file (path)
   "Read the string or pathname PATH and return the resulting hashtable."
-  (typecase path
-    (string (yaml:parse (pathname path)))
-    (pathname (yaml:parse path))
-    (t (error "Unable to read file format."))))
+  (restart-case (typecase path
+                  (string (yaml:parse (pathname path)))
+                  (pathname (yaml:parse path))
+                  (t (error 'bad-file-input
+                            :message "Cannot read specified file.")))
+    (use-value (value)
+      :report "Select new file."
+      :interactive (lambda () (list (ask "Path: ")))
+      (yaml:parse (pathname value)))))
 
 (defun main (rules-file translation-file)
-  (when (or (null rules-file) (null translation-file))
-    (error "Missing data files."))
-
   ;; Handler-Bind is used to get rid of the constant output of warnings by
   ;; Alexandria for using deprecated bare references.
   (handler-bind

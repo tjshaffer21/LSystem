@@ -1,56 +1,34 @@
-A simple implementation of the Lindenmayer system algorithm.
+A simple implementation of the Lindenmayer system.
 
-An L-System is defined as G=(V,w (omega), P). Where:
+# Dependencies
 
-V is a set of symbols that are either variables or terminals.
-w (omega) is the axiom or the initial state of the L-System.
-P is the set of rules that define how variables are replaced.
-
-main.lisp is the main exectution point for the LSystem implementation. It can be
-used in terminal by loading it into a list interpreter. It accepts two
-commandline arguments: -rules and -translate both of which are text files
-containing information to run the program.
-
-Example:
-
-ccl -l main.lisp -- -rules=rules.txt -translate=translate.txt
-
-Dependecies:
-
+* alexandria
 * iterate
-* cl-utilities
-* cl-opengl
+* cl-yaml
 * cl-glfw3
-* asdf and quickload
 
-rules.txt:
+* lisp-unit - ```lsystem-test.asd``` only
 
-[Rules (one per line)] (ex. F=G)
+# Loading
 
-[Iteration Number]
-[Axiom]
+If you want to load it into a running interpreter then it can be done by loading the ```lsystem.asd``` file with ASDF, and then calling quickload to load the system. ```lsystem-test.asd``` can be loaded, similarly, for unit testing.
 
-Examples:
+# Execution
 
-Algae
------
+In interpreter:
 
-A=AB
-B=A
+```(lsystem:main "data/tree1.yaml" "data/turtle_t1.yaml")```
 
-7
-A
+In terminal (using CCL):
 
-translate.txt:
+```ccl -l main.lisp -- -rules=rules.yaml -translate=translate.yaml```,
+where ```ccl``` is path to the CCL executable.
 
-[size] (ex. 1000,1000)
-[rules (one per line) (ex. F:80:white)
+# Data Files
 
+You can find examples in the data\ directory. Do note that values are senstive, and incorrect values will lead to undefined behavior.
 
+# Limitations
 
-TODO
-======
-+ Error handling
-+ Zoom in and out
-+ Handle multiple rules and translations
-+ Modify rules and translations during run time.
+* Extremely large L-Systems will fail due to string size limitations.
+* Currently, large iterations can be slow in rendering.
