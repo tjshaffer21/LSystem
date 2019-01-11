@@ -4,6 +4,34 @@
 
 (in-package #:lsystem)
 
+;;; lexer
+
+(defstruct token
+  (vtype :nil :type keyword)
+  (value "" :type char))
+
+(defun tokenize (str rules-keys trules-keys)
+  "Tokenize the string STR using the rules key information in lists RULES-KEYS
+ and TRUES-KEYS. Returning a list of the tokenized values."
+  (declare (type string str)
+           (type list rules-keys trules-keys)
+           (optimize (speed 3) (safety 3) (debug 0)))
+
+  (labels ((tokenize-rec (str curr last rules-keys trules-keys)
+             (when (= curr last) (return-from tokenize-rec '()))
+
+             (let* ((value (subseq str curr (1+ curr)))
+                    (t-type (cond ((member value rules-keys :test 'string=)
+                                    :nonterminal)
+                                  ((member value trules-keys :test 'string=)
+                                    :terminal)
+                                  (t :nil))))
+                (append (list (make-token :vtype t-type :value value))
+                        (tokenize-rec str (1+ curr) last rules-keys trules-keys)))))
+    (tokenize-rec str 0 (length str) rules-keys trules-keys)))
+
+;;; L-System
+
 (defclass lsystem ()
   ((rules :reader rules
           :initarg :rules
@@ -18,7 +46,7 @@
             :initarg :history
             :initform (make-hash-table)
             :type hashmap
-            :documentation "Cache of iterations.")
+            :documentation "History of all iterations performed.")
    (current-iteration :reader current
                       :initarg :current
                       :initform 0
@@ -38,16 +66,22 @@
 (defmethod substitution ((obj lsystem))
   "Perform the substitution operation on lystem OBJ, returning the new LSYSTEM
  object."
+  (declare (optimize (speed 3) (safety 0) (debug 0)))
+
   (let ((copy-history (alexandria:copy-hash-table (history obj))))
     (setf (gethash (1+ (current obj)) copy-history)
-          (format nil "~{~A~}" (iterate:iter
-                                  (iterate:for char iterate::in-vector
-                                      (get-lsystem-current obj))
-                                  (iterate:for res =
-                                      (gethash (string char) (rules obj)))
-                                  (if res
-                                      (iterate::collect res)
-                                      (iterate::collect (string char))))))
+          (alexandria::flatten
+            (iterate:iter
+              (iterate:for char iterate::in (get-lsystem-current obj))
+              (iterate:for char-str = (string (token-value char)))
+              (iterate:collecting
+                  (cond ((gethash char-str (rules obj))
+                         (tokenize (gethash char-str (rules obj))
+                                          (alexandria:hash-table-keys
+                                              (rules obj))
+                                          (alexandria:hash-table-keys
+                                              (trules obj))))
+                        (t char))))))
     (make-instance 'lsystem :rules (alexandria:copy-hash-table (rules obj))
                             :trules (alexandria:copy-hash-table (trules obj))
                             :history copy-history
@@ -63,15 +97,19 @@
 (defun create-lsystem-from-file (yaml-file)
   "Create the lsystem from the YAML-FILE whch is either a string or path object;
  return values of (lsystem, iterations)."
-  (let ((yaml-data (read-lsystem-file yaml-file))
+  (declare (optimize (speed 3) (safety 3) (debug 0)))
+
+  (let* ((yaml-data (read-lsystem-file yaml-file))
+        (rule-cache (with-error-validate-input yaml-data "rules"))
+        (trule-cache (with-error-validate-input yaml-data "trules"))
         (init-sys (make-hash-table)))
     (setf (gethash 0 init-sys)
-          (with-restart-validate-input yaml-data "axiom"))
+          (tokenize (with-restart-validate-input yaml-data "axiom")
+              (alexandria:hash-table-keys rule-cache)
+              (alexandria:hash-table-keys trule-cache)))
     (values (make-instance 'lsystem
-                :rules (alexandria::copy-hash-table
-                          (with-error-validate-input yaml-data "rules"))
-                :trules (alexandria::copy-hash-table
-                          (with-error-validate-input yaml-data "trules"))
+                :rules (alexandria::copy-hash-table rule-cache)
+                :trules (alexandria::copy-hash-table trule-cache)
                 :history init-sys)
             (with-restart-validate-input yaml-data "iterations"))))
 

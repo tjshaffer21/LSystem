@@ -104,9 +104,8 @@
   (iterate:iter
     (iterate:with system-size =
         (1+ (iterate:iter
-              (iterate:with keys = (alexandria:hash-table-keys (rules lsys)))
-              (iterate:for ch iterate::in-vector (get-lsystem-current lsys))
-              (iterate:counting (member ch keys :test 'string=)))))
+              (iterate:for ch iterate::in (get-lsystem-current lsys))
+              (iterate:counting (eq (token-vtype ch) :nonterminal)))))
     (iterate:with obj = (create-gl-object system-size (* system-size 2)))
     (iterate:with stack = '())
     (iterate:with window = (glfw:get-window-size))
@@ -121,11 +120,12 @@
     (iterate:with translation-rules =
         (with-error-validate-input translation "rules")) ; Cache
 
-    (iterate:for i iterate::in-vector (get-lsystem-current lsys))
-    (iterate:for rule-translation = (gethash (string i) translation-rules))
+    (iterate:for i iterate::in (get-lsystem-current lsys))
+    (iterate:for i-str = (string (token-value i)))
+    (iterate:for rule-translation = (gethash i-str translation-rules))
     (iterate:if-first-time (nset-gl-object-vertex obj 0 x1 y1))
 
-    (cond ((gethash (string i) (rules lsys))
+    (cond ((eq (token-vtype i) :nonterminal)
             (multiple-value-bind (x y)
                 (calculate-new-point x1 y1 (first rule-translation)
                     current-angle)
@@ -142,8 +142,8 @@
                 (setf y1 y))
               (incf k)
               (incf k-value))
-          ((gethash (string i) (trules lsys))
-            (let ((cache-rule (gethash (string i) (trules lsys))))
+          ((eq (token-vtype i) :terminal)
+            (let ((cache-rule (gethash i-str (trules lsys))))
               (cond ((typep cache-rule 'list)
                      (when (string= (first cache-rule) "angle")
                         (setf current-angle (+ current-angle
@@ -200,8 +200,8 @@
 
       (multiple-value-bind (lsys iterations)
           (create-lsystem-from-file rules-file)
-        (let* ((obj (create-object (do-substitution-times lsys iterations)
-                                   (read-translation-file translation-file))))
+        (let ((obj (create-object (do-substitution-times lsys iterations)
+                                  (read-translation-file translation-file))))
           (loop until (glfw:window-should-close-p)
             do (render obj)
             do (glfw:poll-events)

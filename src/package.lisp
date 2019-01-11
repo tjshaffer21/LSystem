@@ -4,7 +4,8 @@
            :create-lsystem-from-file
            :do-substitution-time
            :get-lsystem-current
-           :nonterminals
+           :get-lsystem-at
            :rules
            :substitution
-           :terminals))
+           :token-vtype
+           :token-value))
