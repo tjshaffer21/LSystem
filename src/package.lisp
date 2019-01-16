@@ -2,10 +2,12 @@
   (:use #:cl)
   (:export :main
            :create-lsystem-from-file
-           :do-substitution-time
-           :get-lsystem-current
-           :get-lsystem-at
+           :lsystem-count
+           :lsystem-rule
+           :lsystem-state
            :rules
            :substitution
+           :token-of
+           :token-type-of-p
            :token-vtype
            :token-value))

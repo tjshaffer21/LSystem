@@ -87,6 +87,25 @@
 
 ;;; End OpenGL-related functions
 
+(defun nset-new-gl-point (gl-obj xy len angle k)
+  "Calculate and set new values for GL-OBJ array using the given a list of
+ floats XY, floats LEN and ANGLE, and index list K (k, k-prev). The GL-OBJ is
+ modified, and new values for XY and K are returned."
+  (declare (optimize (speed 3) (safety 0) (debug 0)))
+  (let ((k (first k))
+        (k-prev (first (last k))))
+    (multiple-value-bind (nx ny)
+        (calculate-new-point (first xy) (first (last xy)) len angle)
+      (nset-gl-object-vertex gl-obj (1+ k) nx ny)
+      (nset-gl-object-index gl-obj (+ k k) k-prev)
+
+      (nset-gl-object-index gl-obj (1+ (+ k k)) k-prev)
+      (nset-gl-object-index gl-obj (1+ (+ k k))
+                                    (if (= k k-prev)
+                                        (1+ k-prev)
+                                        (1+ (setf k-prev k))))
+      (values (list nx ny) (list (1+ k) (1+ k-prev))))))
+
 (defun calculate-new-point (start-x start-y length angle)
   "Calculate the new point given START-X, START-Y, a normalized LENGTH, and an
  ANGLE (degrees). Returning multiple float values (x,y)."
@@ -102,61 +121,44 @@
            (type hashmap translation))
 
   (iterate:iter
-    (iterate:with system-size =
-        (1+ (iterate:iter
-              (iterate:for ch iterate::in (get-lsystem-current lsys))
-              (iterate:counting (eq (token-vtype ch) :nonterminal)))))
-    (iterate:with obj = (create-gl-object system-size (* system-size 2)))
+    (iterate:with system-size = (1+ (lsystem-count lsys :nonterminal)))
+    (iterate:with obj = (create-gl-object system-size
+                                          (+ system-size system-size)))
     (iterate:with stack = '())
-    (iterate:with window = (glfw:get-window-size))
-
     (iterate:with current-angle =
         (with-restart-validate-input translation "start-angle"))
-    (iterate:with x1 = (with-restart-validate-input translation "start-x"))
-    (iterate:with y1 = (with-restart-validate-input translation "start-y"))
-    (iterate:with k = 0) ; An index for OpenGL
-    (iterate:with k-value = 0) ; An index for OpenGL.
-
+    (iterate:with xy =
+        (list (with-restart-validate-input translation "start-x")
+              (with-restart-validate-input translation "start-y")))
+    (iterate:with k = (list 0 0))
     (iterate:with translation-rules =
         (with-error-validate-input translation "rules")) ; Cache
-
-    (iterate:for i iterate::in (get-lsystem-current lsys))
-    (iterate:for i-str = (string (token-value i)))
-    (iterate:for rule-translation = (gethash i-str translation-rules))
-    (iterate:if-first-time (nset-gl-object-vertex obj 0 x1 y1))
-
-    (cond ((eq (token-vtype i) :nonterminal)
-            (multiple-value-bind (x y)
-                (calculate-new-point x1 y1 (first rule-translation)
-                    current-angle)
-              (nset-gl-object-vertex obj (1+ k) x y)
-              (nset-gl-object-index obj (* k 2) k-value)
-
-              (nset-gl-object-index obj (1+ (* k 2)) k-value)
-              (cond ((= k k-value)
-                      (nset-gl-object-index obj (1+ (* k 2)) (1+ k-value)))
-                    (t
-                      (nset-gl-object-index obj (1+ (* k 2))
-                        (1+ (setf k-value k)))))
-                (setf x1 x)
-                (setf y1 y))
-              (incf k)
-              (incf k-value))
-          ((eq (token-vtype i) :terminal)
-            (let ((cache-rule (gethash i-str (trules lsys))))
-              (cond ((typep cache-rule 'list)
-                     (when (string= (first cache-rule) "angle")
-                        (setf current-angle (+ current-angle
-                                               (first (last cache-rule))))))
-                    ((string= cache-rule "push")
-                     (push (list x1 y1 current-angle k) stack))
-                    ((string= cache-rule "pop")
-                     (let ((values (pop stack)))
-                        (setf x1 (pop values))
-                        (setf y1 (pop values))
-                        (setf current-angle (pop values))
-                        (setf k-value (pop values))))
-                    (t (warn "Unimplemented terminal rule detected!")))))
+    (iterate:for i iterate::in (lsystem-state lsys))
+    (iterate:for rule-translation =
+        (gethash (token-value (token-of lsys i)) translation-rules))
+    (iterate:if-first-time
+        (nset-gl-object-vertex obj 0 (first xy) (first (last xy))))
+    (case (token-vtype (token-of lsys i))
+          (:nonterminal
+            (multiple-value-bind (nxy nk)
+                (nset-new-gl-point obj xy (first rule-translation)
+                                  current-angle k)
+              (setf xy nxy)
+              (setf k nk)))
+          (:terminal
+              (let ((cache-rule (lsystem-rule lsys 'trules i)))
+                (cond ((listp cache-rule)
+                       (when (eq (first cache-rule) :angle)
+                          (setf current-angle (+ current-angle
+                                                (first (last cache-rule))))))
+                      ((eq cache-rule :push)
+                       (push (list xy current-angle (first k)) stack))
+                      ((eq cache-rule :pop)
+                       (let ((values (pop stack)))
+                          (setf xy (pop values))
+                          (setf current-angle (pop values))
+                          (setf k (list (first k) (pop values)))))
+                      (t (warn "Unimplemented terminal rule detected!")))))
           (t (warn "Unimplemented rule detected")))
     (iterate:finally (iterate::return obj))))
 
@@ -200,7 +202,7 @@
 
       (multiple-value-bind (lsys iterations)
           (create-lsystem-from-file rules-file)
-        (let ((obj (create-object (do-substitution-times lsys iterations)
+        (let ((obj (create-object (substitution lsys iterations)
                                   (read-translation-file translation-file))))
           (loop until (glfw:window-should-close-p)
             do (render obj)

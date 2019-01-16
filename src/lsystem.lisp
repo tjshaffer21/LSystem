@@ -4,31 +4,23 @@
 
 (in-package #:lsystem)
 
-;;; lexer
-
 (defstruct token
   (vtype :nil :type keyword)
-  (value "" :type char))
+  (value "" :type string))
 
-(defun tokenize (str rules-keys trules-keys)
-  "Tokenize the string STR using the rules key information in lists RULES-KEYS
- and TRUES-KEYS. Returning a list of the tokenized values."
+(defun token-type-of-p (tok token-type)
+  "Return T if token TOK is of keyword TOKEN-TYPE; else nil."
+  (declare (type token tok)
+           (type keyword token-type))
+  (eq (token-vtype tok) token-type))
+
+(defun string-to-int-list (str)
+  "Parse the string STR returing list of ints."
   (declare (type string str)
-           (type list rules-keys trules-keys)
-           (optimize (speed 3) (safety 3) (debug 0)))
-
-  (labels ((tokenize-rec (str curr last rules-keys trules-keys)
-             (when (= curr last) (return-from tokenize-rec '()))
-
-             (let* ((value (subseq str curr (1+ curr)))
-                    (t-type (cond ((member value rules-keys :test 'string=)
-                                    :nonterminal)
-                                  ((member value trules-keys :test 'string=)
-                                    :terminal)
-                                  (t :nil))))
-                (append (list (make-token :vtype t-type :value value))
-                        (tokenize-rec str (1+ curr) last rules-keys trules-keys)))))
-    (tokenize-rec str 0 (length str) rules-keys trules-keys)))
+           (optimize (speed 3) (safety 0) (debug 0)))
+  (iterate:iter
+    (iterate:for char iterate::in-vector str)
+    (iterate:collecting (char-code (coerce char 'character)))))
 
 ;;; L-System
 
@@ -42,6 +34,10 @@
            :initarg :trules
            :initform (make-hash-table)
            :documentation "Rules for the terminals of the L-System.")
+   (lookup :reader lookup
+           :initarg :lookup
+           :initform (make-hash-table)
+           :documentation "Lookup table for tokens.")
    (history :reader history
             :initarg :history
             :initform (make-hash-table)
@@ -55,44 +51,108 @@
  current-iteration == 0 is the initial statement."))
   (:documentation "Data structure for the Lindenmayer System."))
 
-(defmethod get-lsystem-current ((obj lsystem))
-  "Return the current state of the lsystem OBJ."
-  (gethash (current obj) (history obj)))
+(defgeneric lsystem-count (obj count-type)
+  (:documentation "Count tokens in OBJ given the keyword COUNT-TYPE; where key-
+ words are :terminal, :nonterminal, or :all. Returning the integer result."))
 
-(defmethod get-lsystem-at ((obj lsystem) iteration)
-  "Return the state of the lsytem at the specified ITERATION."
-  (gethash iteration (history obj)))
+(defgeneric lsystem-state (obj &optional iteration)
+  (:documentation "Return the state of the lsystem OBJ at the specified
+ ITERATION."))
 
-(defmethod substitution ((obj lsystem))
-  "Perform the substitution operation on lystem OBJ, returning the new LSYSTEM
- object."
+(defgeneric lsystem-rule (obj rule-type rule-value)
+  (:documentation "Return the rule for RULE-VALUE key of RULE-TYPE; where RULE-TYPE is a symbol
+ 'rules or 'trules indicating which set of rules to retrieve."))
+
+(defgeneric token-of (obj token-key)
+  (:documentation "Return the token in the lsystem OBJ that TOKEN-KEY
+ identifies."))
+
+(defgeneric substitution (obj &optional times)
+  (:documentation "Perform the substitution operation on lystem OBJ the given
+ number of TIMES, where the default is 1; returning the new LSYSTEM object."))
+
+(defmethod lsystem-state ((obj lsystem) &optional
+                         (iteration nil iteration-supplied-p))
+  (if iteration-supplied-p
+      (gethash iteration (history obj))
+      (gethash (current obj) (history obj))))
+
+(defmethod lsystem-count ((obj lsystem) count-type)
+  (declare (type keyword count-type))
+  (iterate:iter
+    (iterate:for token iterate::in (lsystem-state obj))
+    (iterate:counting
+      (case count-type
+        (:nonterminal
+          (token-type-of-p (token-of obj token) count-type))
+        (:terminal
+          (token-type-of-p (token-of obj token) count-type))
+        (:all t)))))
+
+(defmethod lsystem-rule ((obj lsystem) rule-type rule-value)
+  (let ((cvalue (string (code-char rule-value)))
+        (val nil))
+    (cond ((eq rule-type 'rules)
+           (gethash cvalue (rules obj)))
+          ((eq rule-type 'trules)
+            (gethash cvalue (trules obj)))
+          (t nil))))
+
+(defmethod token-of ((obj lsystem) token-key)
+  (gethash token-key (lookup obj)))
+
+(defmethod substitution ((obj lsystem) &optional (times 1))
   (declare (optimize (speed 3) (safety 0) (debug 0)))
 
-  (let ((copy-history (alexandria:copy-hash-table (history obj))))
-    (setf (gethash (1+ (current obj)) copy-history)
-          (alexandria::flatten
-            (iterate:iter
-              (iterate:for char iterate::in (get-lsystem-current obj))
-              (iterate:for char-str = (string (token-value char)))
-              (iterate:collecting
-                  (cond ((gethash char-str (rules obj))
-                         (tokenize (gethash char-str (rules obj))
-                                          (alexandria:hash-table-keys
-                                              (rules obj))
-                                          (alexandria:hash-table-keys
-                                              (trules obj))))
-                        (t char))))))
-    (make-instance 'lsystem :rules (alexandria:copy-hash-table (rules obj))
-                            :trules (alexandria:copy-hash-table (trules obj))
-                            :history copy-history
-                            :current (1+ (current obj)))))
+  (when (<= times 0) (return-from substitution obj))
 
-(defmethod do-substitution-times ((obj lsystem) times)
-  "Perform substitution on lsystem OBJ the give number of TIMES returning the
- last LSYSTEM."
-  (declare (type integer times))
-  (cond ((<= times 0) obj)
-        (t (do-substitution-times (substitution obj) (1- times)))))
+  (setf (gethash (1+ (current obj)) (history obj))
+        (alexandria::flatten
+          (iterate:iter
+            (iterate:for char iterate::in (lsystem-state obj))
+            (iterate:collecting
+                (cond ((lsystem-rule obj 'rules char)
+                        (string-to-int-list
+                            (lsystem-rule obj 'rules char)))
+                      (t char))))))
+  (substitution (make-instance 'lsystem :rules (rules obj)
+                                        :trules (trules obj)
+                                        :lookup (lookup obj)
+                                        :history (history obj)
+                                        :current (1+ (current obj)))
+                (1- times)))
+
+(defun create-lookup-table (rules-table)
+  "Create a lookup table from the hash-table RULES-TABLE; returning the resulting
+hash-table."
+  (let ((lookup (make-hash-table)))
+    (iterate:iter
+      (iterate:for rule iterate::in (alexandria:hash-table-values rules-table))
+      (iterate:iter
+        (iterate:for value iterate::in-vector rule)
+        (unless (gethash (char-code (coerce value 'character)) lookup)
+          (setf (gethash (char-code (coerce value 'character)) lookup)
+                (make-token
+                    :vtype (cond ((member value
+                                      (alexandria:hash-table-keys rules-table)
+                                      :test 'string=)
+                                  :nonterminal)
+                                  (t :terminal))
+                    :value (string value))))))
+    lookup))
+
+(defun parse-terminal-rules (trules)
+  "Rewrite terminal rules in TRULES so that 'function' strings become keywords.
+ Returning the new hash table."
+  (let ((parsed-rules (make-hash-table :test 'equal)))
+    (iterate:iter
+      (iterate:for (key value) iterate::in-hashtable trules)
+      (setf (gethash key parsed-rules)
+            (cond ((atom value)
+                   (alexandria:make-keyword (string-upcase value)))
+                  (t (list (alexandria:make-keyword (string-upcase (first value)))
+                           (first (last value)))))))
+    parsed-rules))
 
 (defun create-lsystem-from-file (yaml-file)
   "Create the lsystem from the YAML-FILE whch is either a string or path object;
@@ -100,16 +160,15 @@
   (declare (optimize (speed 3) (safety 3) (debug 0)))
 
   (let* ((yaml-data (read-lsystem-file yaml-file))
-        (rule-cache (with-error-validate-input yaml-data "rules"))
-        (trule-cache (with-error-validate-input yaml-data "trules"))
-        (init-sys (make-hash-table)))
+         (rule-cache (with-error-validate-input yaml-data "rules"))
+         (init-sys (make-hash-table)))
     (setf (gethash 0 init-sys)
-          (tokenize (with-restart-validate-input yaml-data "axiom")
-              (alexandria:hash-table-keys rule-cache)
-              (alexandria:hash-table-keys trule-cache)))
+          (string-to-int-list (with-restart-validate-input yaml-data "axiom")))
     (values (make-instance 'lsystem
-                :rules (alexandria::copy-hash-table rule-cache)
-                :trules (alexandria::copy-hash-table trule-cache)
+                :rules rule-cache
+                :trules (parse-terminal-rules
+                          (with-error-validate-input yaml-data "trules"))
+                :lookup (create-lookup-table rule-cache)
                 :history init-sys)
             (with-restart-validate-input yaml-data "iterations"))))
 
