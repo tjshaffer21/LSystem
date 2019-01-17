@@ -3,6 +3,8 @@
 
 (in-package #:lsystem)
 
+(defparameter *max-pworkers* 4)
+
 (gl:define-gl-array-format position-color
   (gl:vertex :type :float :components (x y))
   (gl:color :type :unsigned-char :components (r g b)))
@@ -180,6 +182,8 @@
       (yaml:parse (pathname value)))))
 
 (defun main (rules-file translation-file)
+  (setf lparallel:*kernel* (lparallel:make-kernel *max-pworkers*))
+
   ;; Handler-Bind is used to get rid of the constant output of warnings by
   ;; Alexandria for using deprecated bare references.
   (handler-bind

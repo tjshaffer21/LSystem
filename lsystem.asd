@@ -8,6 +8,7 @@
                :cl-yaml
                :cl-glfw3
                :cl-opengl
+               :lparallel
                :iterate)
   :components ((:file "src/package")
                (:file "src/error")

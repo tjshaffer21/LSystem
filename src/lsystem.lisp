@@ -14,13 +14,15 @@
            (type keyword token-type))
   (eq (token-vtype tok) token-type))
 
-(defun string-to-int-list (str)
+(lparallel:defpun string-to-int-list (str)
   "Parse the string STR returing list of ints."
   (declare (type string str)
            (optimize (speed 3) (safety 0) (debug 0)))
-  (iterate:iter
-    (iterate:for char iterate::in-vector str)
-    (iterate:collecting (char-code (coerce char 'character)))))
+  (lparallel:pmap 'list #'(lambda (char)
+                            (char-code (coerce char 'character)))
+                  :parts *max-pworkers*
+                  :size (length str)
+                  str))
 
 ;;; L-System
 
@@ -38,12 +40,12 @@
    (lookup :reader lookup
            :initarg :lookup
            :initform (make-hash-table)
-           :type hashmap
+           :type hash-table
            :documentation "Lookup table for tokens.")
    (history :reader history
             :initarg :history
             :initform (make-hash-table)
-            :type hashmap
+            :type hash-table
             :documentation "History of all iterations performed.")
    (current-iteration :reader current
                       :initarg :current
@@ -75,25 +77,27 @@
 
 (defmethod lsystem-state ((obj lsystem) &optional
                          (iteration 0 iteration-supplied-p))
+  (declare (type integer iteration)
+           (type bool iteration-supplied-p))
   (if iteration-supplied-p
       (gethash iteration (history obj))
       (gethash (current obj) (history obj))))
 
 (defmethod lsystem-count ((obj lsystem) count-type)
   (declare (type keyword count-type))
-  (iterate:iter
-    (iterate:for token iterate::in (lsystem-state obj))
-    (iterate:counting
-      (case count-type
-        (:nonterminal
-          (token-type-of-p (token-of obj token) count-type))
-        (:terminal
-          (token-type-of-p (token-of obj token) count-type))
-        (:all t)))))
+  (lparallel:pcount-if #'(lambda (token)
+                            (case count-type
+                              (:nonterminal
+                                (token-type-of-p (token-of obj token) count-type))
+                              (:terminal
+                                (token-type-of-p (token-of obj token) count-type))
+                              (:all t)))
+                      (lsystem-state obj)))
 
 (defmethod lsystem-rule ((obj lsystem) rule-type rule-value)
-  (let ((cvalue (string (code-char rule-value)))
-        (val nil))
+  (declare (type symbol rule-type)
+           (type integer rule-value))
+  (let ((cvalue (string (code-char rule-value))))
     (cond ((eq rule-type 'rules)
            (gethash cvalue (rules obj)))
           ((eq rule-type 'trules)
@@ -101,20 +105,23 @@
           (t nil))))
 
 (defmethod token-of ((obj lsystem) token-key)
+  (declare (type integer token-key))
   (gethash token-key (lookup obj)))
 
 (defmethod substitution ((obj lsystem) &optional (times 1))
-  (declare (optimize (speed 3) (safety 0) (debug 0)))
+  (declare (type integer times)
+           (optimize (speed 3) (safety 0) (debug 0)))
   (labels ((sub-rec (lsys curr times)
             (when (<= times 0) (return-from sub-rec (history lsys)))
             (setf (gethash (1+ curr) (history lsys))
-                  (alexandria:flatten
-                    (map 'list #'(lambda (char)
+                  (flatten-list
+                    (lparallel:pmap 'list #'(lambda (char)
                                     (cond ((lsystem-rule lsys 'rules char)
                                            (string-to-int-list
                                               (lsystem-rule lsys 'rules char)))
                                           (t char)))
-                          (lsystem-state lsys curr))))
+                                    :parts *max-pworkers*
+                                    (lsystem-state lsys curr))))
             (sub-rec lsys (1+ curr) (1- times))))
     (make-instance 'lsystem :rules (rules obj)
                             :trules (trules obj)
@@ -122,9 +129,16 @@
                             :history (sub-rec obj (current obj) times)
                             :current (+ (current obj) times))))
 
+(defun flatten-list (lst)
+  "Flatten a list LST using lparallel, and returning the resulting list."
+  (cond ((null lst) nil)
+        ((atom lst) (list lst))
+        (t (lparallel:pmapcan #'flatten-list lst))))
+
 (defun create-lookup-table (rules-table)
   "Create a lookup table from the hash-table RULES-TABLE; returning the resulting
 hash-table."
+  (declare (type hash-table rules-table))
   (let ((lookup (make-hash-table :size (hash-table-size rules-table))))
     (iterate:iter
       (iterate:for rule iterate::in (alexandria:hash-table-values rules-table))
@@ -144,6 +158,7 @@ hash-table."
 (defun parse-terminal-rules (trules)
   "Rewrite terminal rules in TRULES so that 'function' strings become keywords.
  Returning the resulting alist."
+  (declare (type hash-table trules))
   (iterate:iter
     (iterate:for (key value) iterate::in-hashtable trules)
     (iterate:collecting
