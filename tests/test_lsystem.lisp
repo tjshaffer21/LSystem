@@ -47,9 +47,17 @@
   (let ((system (lsystem:create-lsystem-from-file "data/tree2.yaml")))
     (lisp-unit:assert-equal "X"
         (test-to-string (lsystem:lsystem-state system)))
-    (setf system (lsystem:substitution system 1))
+    (setf system (lsystem:substitution system))
     (lisp-unit:assert-equal "F[+X][-X]FX"
         (test-to-string (lsystem:lsystem-state system)))
-    (setf system (lsystem:substitution system 1))
+    (setf system (lsystem:substitution system))
     (lisp-unit:assert-equal "FF[+F[+X][-X]FX][-F[+X][-X]FX]FFF[+X][-X]FX"
         (test-to-string (lsystem:lsystem-state system)))))
+
+(lisp-unit:define-test test-history
+  (let ((system (lsystem:create-lsystem-from-file "data/tree2.yaml")))
+    (lisp-unit:assert-equal "X"
+      (test-to-string (lsystem:lsystem-state system)))
+    (setf system (lsystem:substitution system 2))
+    (lisp-unit:assert-equal "F[+X][-X]FX"
+      (test-to-string (lsystem:lsystem-state system 1)))))
