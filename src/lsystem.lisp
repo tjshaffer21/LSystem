@@ -18,17 +18,14 @@
   "Parse the string STR returing list of ints."
   (declare (type string str)
            (optimize (speed 3) (safety 0) (debug 0)))
-  (iterate:iter
-    (iterate:for char iterate::in-vector str)
-    (iterate:collecting (char-code (coerce char 'character)))))
-
+  (map 'list #'(lambda (char) (char-code (coerce char 'character))) str))
 ;;; L-System
 
 (defclass lsystem ()
   ((rules :reader rules
           :initarg :rules
           :initform (make-hash-table)
-          :type hashmap
+          :type hash-table
           :documentation "Rules for the L-System.")
    (trules :reader trules
            :initarg :trules
@@ -38,12 +35,12 @@
    (lookup :reader lookup
            :initarg :lookup
            :initform (make-hash-table)
-           :type hashmap
+           :type hash-table
            :documentation "Lookup table for tokens.")
    (history :reader history
             :initarg :history
             :initform (make-hash-table)
-            :type hashmap
+            :type hash-table
             :documentation "History of all iterations performed.")
    (current-iteration :reader current
                       :initarg :current
@@ -75,25 +72,27 @@
 
 (defmethod lsystem-state ((obj lsystem) &optional
                          (iteration 0 iteration-supplied-p))
+  (declare (type integer iteration)
+           (type bool iteration-supplied-p))
   (if iteration-supplied-p
       (gethash iteration (history obj))
       (gethash (current obj) (history obj))))
 
 (defmethod lsystem-count ((obj lsystem) count-type)
   (declare (type keyword count-type))
-  (iterate:iter
-    (iterate:for token iterate::in (lsystem-state obj))
-    (iterate:counting
-      (case count-type
-        (:nonterminal
-          (token-type-of-p (token-of obj token) count-type))
-        (:terminal
-          (token-type-of-p (token-of obj token) count-type))
-        (:all t)))))
+  (count-if #'(lambda (token)
+                (case count-type
+                  (:nonterminal
+                    (token-type-of-p (token-of obj token) count-type))
+                  (:terminal
+                    (token-type-of-p (token-of obj token) count-type))
+                  (:all t)))
+            (lsystem-state obj)))
 
 (defmethod lsystem-rule ((obj lsystem) rule-type rule-value)
-  (let ((cvalue (string (code-char rule-value)))
-        (val nil))
+  (declare (type symbol rule-type)
+           (type integer rule-value))
+  (let ((cvalue (string (code-char rule-value))))
     (cond ((eq rule-type 'rules)
            (gethash cvalue (rules obj)))
           ((eq rule-type 'trules)
@@ -101,6 +100,7 @@
           (t nil))))
 
 (defmethod token-of ((obj lsystem) token-key)
+  (declare (type integer token-key))
   (gethash token-key (lookup obj)))
 
 (defmethod substitution ((obj lsystem) &optional (times 1))
@@ -125,6 +125,7 @@
 (defun create-lookup-table (rules-table)
   "Create a lookup table from the hash-table RULES-TABLE; returning the resulting
 hash-table."
+  (declare (type hash-table rules-table))
   (let ((lookup (make-hash-table :size (hash-table-size rules-table))))
     (iterate:iter
       (iterate:for rule iterate::in (alexandria:hash-table-values rules-table))
@@ -144,6 +145,7 @@ hash-table."
 (defun parse-terminal-rules (trules)
   "Rewrite terminal rules in TRULES so that 'function' strings become keywords.
  Returning the resulting alist."
+  (declare (type hash-table trules))
   (iterate:iter
     (iterate:for (key value) iterate::in-hashtable trules)
     (iterate:collecting

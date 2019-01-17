@@ -6,6 +6,9 @@
                       (iterate:collecting
                         (code-char i)))))
 
+(lisp-unit:define-test test-string-to-int-list
+  (lisp-unit:assert-equal (list 65 66 67) (lsystem::string-to-int-list "ABC")))
+
 (lisp-unit:define-test test-count
     (let ((system (lsystem:create-lsystem-from-file "data/tree1.yaml")))
         (lisp-unit:assert-equal 1 (lsystem:lsystem-count system :all))
